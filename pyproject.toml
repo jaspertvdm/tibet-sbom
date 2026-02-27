@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tibet-sbom"
+version = "0.1.0"
+description = "Software Bill of Materials with TIBET Provenance — every dependency traced, every build proven"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "J. van de Meent", email = "jasper@humotica.com" },
+    { name = "R. AI", email = "root_idd@humotica.nl" },
+]
+maintainers = [
+    { name = "Humotica AI Lab", email = "ai@humotica.nl" },
+]
+keywords = ["tibet", "sbom", "cyclonedx", "spdx", "supply-chain", "compliance", "cra", "provenance"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "tibet-core>=0.2.0",
+]
+
+[project.optional-dependencies]
+full = ["rich>=13.0.0"]
+dev = ["pytest>=7.0", "ruff>=0.1.0"]
+
+[project.scripts]
+tibet-sbom = "tibet_sbom.cli:main"
+
+[project.urls]
+Homepage = "https://humotica.com"
+Repository = "https://github.com/jaspertvdm/tibet-sbom"
+Documentation = "https://humotica.com/docs/tibet-sbom"
+"Bug Tracker" = "https://github.com/jaspertvdm/tibet-sbom/issues"
+"TIBET Protocol" = "https://pypi.org/project/tibet-core/"
+"IETF TIBET Draft" = "https://datatracker.ietf.org/doc/draft-vandemeent-tibet-provenance/"
