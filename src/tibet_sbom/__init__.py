@@ -29,7 +29,7 @@ License: MIT — Humotica AI Lab 2025-2026
 from .generator import SBOMGenerator, SBOMDocument, Component, Vulnerability
 from .provenance import SBOMProvenance
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "SBOMGenerator",

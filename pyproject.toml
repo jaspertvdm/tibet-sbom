@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tibet-sbom"
-version = "0.1.0"
+version = "0.2.0"
 description = "Software Bill of Materials with TIBET Provenance — every dependency traced, every build proven"
 readme = "README.md"
 license = { text = "MIT" }

@@ -323,7 +323,7 @@ class SBOMGenerator:
             tibet_chain_length=len(self.provenance.tokens),
             metadata={
                 "scanner": "tibet-sbom",
-                "scanner_version": "0.1.0",
+                "scanner_version": "0.2.0",
                 "scan_path": self._scan_path,
                 "scan_node": os.uname().nodename,
             },
@@ -534,6 +534,8 @@ class SBOMGenerator:
         name = name.strip().lower()
         if not name:
             return
+        if not self._is_valid_package_name(name, source=source):
+            return
 
         for existing in self._components:
             if existing.name == name:
@@ -545,7 +547,7 @@ class SBOMGenerator:
         content_hash = ""
         if name and version:
             raw = f"{source}:{name}:{version}"
-            content_hash = hashlib.sha256(raw.encode()).hexdigest()[:32]
+            content_hash = hashlib.sha256(raw.encode()).hexdigest()
 
         self._components.append(
             Component(
@@ -569,42 +571,84 @@ class SBOMGenerator:
         version = ""
         deps: list[tuple[str, str]] = []
 
-        # Extract project name
-        m = re.search(r'^\s*name\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        # Find the [project] section boundaries
+        project_start = None
+        project_end = len(text)
+        for m in re.finditer(r"^\[([^\]]+)\]", text, re.MULTILINE):
+            section = m.group(1).strip()
+            if section == "project":
+                project_start = m.end()
+            elif project_start is not None and not section.startswith("project."):
+                project_end = m.start()
+                break
+
+        project_text = text[project_start:project_end] if project_start is not None else ""
+
+        # Extract project name from [project] section only
+        m = re.search(r'^\s*name\s*=\s*"([^"]+)"', project_text, re.MULTILINE)
         if m:
             name = m.group(1)
 
-        # Extract version
-        m = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        # Extract version from [project] section only
+        m = re.search(r'^\s*version\s*=\s*"([^"]+)"', project_text, re.MULTILINE)
         if m:
             version = m.group(1)
 
-        # Extract dependencies array
+        # Extract dependencies array from [project] section only
         dep_match = re.search(
             r"^\s*dependencies\s*=\s*\[(.*?)\]",
-            text,
+            project_text,
             re.MULTILINE | re.DOTALL,
         )
         if dep_match:
             dep_block = dep_match.group(1)
             for dep_str in re.findall(r'"([^"]+)"', dep_block):
                 dep_name, dep_ver = self._parse_dep_spec(dep_str)
-                deps.append((dep_name, dep_ver))
-
-        # Also check optional-dependencies
-        for opt_match in re.finditer(
-            r"^\s*(\w+)\s*=\s*\[(.*?)\]",
-            text,
-            re.MULTILINE | re.DOTALL,
-        ):
-            section_text_before = text[: opt_match.start()]
-            if "[project.optional-dependencies]" in section_text_before:
-                block = opt_match.group(2)
-                for dep_str in re.findall(r'"([^"]+)"', block):
-                    dep_name, dep_ver = self._parse_dep_spec(dep_str)
+                if self._is_valid_package_name(dep_name):
                     deps.append((dep_name, dep_ver))
 
+        # Find [project.optional-dependencies] section
+        opt_start = None
+        opt_end = len(text)
+        for m in re.finditer(r"^\[([^\]]+)\]", text, re.MULTILINE):
+            section = m.group(1).strip()
+            if section == "project.optional-dependencies":
+                opt_start = m.end()
+            elif opt_start is not None and section != "project.optional-dependencies":
+                opt_end = m.start()
+                break
+
+        if opt_start is not None:
+            opt_text = text[opt_start:opt_end]
+            for opt_match in re.finditer(
+                r"^\s*\w+\s*=\s*\[(.*?)\]",
+                opt_text,
+                re.MULTILINE | re.DOTALL,
+            ):
+                block = opt_match.group(1)
+                for dep_str in re.findall(r'"([^"]+)"', block):
+                    dep_name, dep_ver = self._parse_dep_spec(dep_str)
+                    if self._is_valid_package_name(dep_name):
+                        deps.append((dep_name, dep_ver))
+
         return name, version, deps
+
+    @staticmethod
+    def _is_valid_package_name(name: str, source: str = "") -> bool:
+        """Check if a string looks like a valid package name (not a path)."""
+        if not name:
+            return False
+        # Absolute paths are never package names
+        if name.startswith("/") or name.startswith("."):
+            return False
+        # Go modules use URL-style names with slashes — that's valid
+        if source == "golang" and "/" in name:
+            return True
+        # For non-Go: reject strings that look like file paths
+        if "/" in name:
+            return False
+        # Must match PEP 508 / npm / cargo package name pattern
+        return bool(re.match(r"^[a-zA-Z0-9@]([a-zA-Z0-9._\-/@]*[a-zA-Z0-9])?$", name))
 
     def _parse_requirements(self, path: Path) -> list[tuple[str, str]]:
         """Parse requirements.txt for dependencies."""
@@ -732,6 +776,7 @@ class SBOMGenerator:
 
         Uses importlib.metadata to get license and version info for
         packages that are installed in the current environment.
+        Also discovers transitive dependencies from installed requires.
         """
         try:
             from importlib.metadata import distributions
@@ -742,27 +787,42 @@ class SBOMGenerator:
         try:
             for dist in distributions():
                 meta = dist.metadata
-                dist_name = (meta["Name"] or "").lower()
+                dist_name = (meta["Name"] or "").lower().replace("_", "-")
                 installed[dist_name] = {
                     "version": meta["Version"] or "",
                     "license": meta.get("License", "") or "",
+                    "requires": dist.requires or [],
                 }
         except Exception:
             return
 
+        # Normalize existing component names for lookup
+        known_names = {c.name.lower().replace("_", "-") for c in self._components}
+
         for comp in self._components:
             if comp.source != "pypi":
                 continue
-            info = installed.get(comp.name.lower())
-            if not info:
-                # Try with hyphens replaced by underscores and vice versa
-                alt = comp.name.lower().replace("-", "_")
-                info = installed.get(alt)
-                if not info:
-                    alt = comp.name.lower().replace("_", "-")
-                    info = installed.get(alt)
+            norm = comp.name.lower().replace("_", "-")
+            info = installed.get(norm)
             if info:
                 if not comp.version and info["version"]:
                     comp.version = info["version"]
                 if not comp.license and info["license"]:
                     comp.license = info["license"]
+
+                # Discover transitive deps from requires
+                for req_str in info["requires"]:
+                    # Skip extras-only requirements like 'foo; extra == "dev"'
+                    if "extra ==" in req_str:
+                        continue
+                    # Strip environment markers
+                    req_clean = req_str.split(";")[0].strip()
+                    dep_name, dep_ver = self._parse_dep_spec(req_clean)
+                    dep_norm = dep_name.lower().replace("_", "-")
+                    if dep_norm not in known_names and self._is_valid_package_name(dep_name):
+                        dep_info = installed.get(dep_norm)
+                        if dep_info:
+                            # Only add transitive deps we can fully resolve
+                            actual_ver = dep_info["version"]
+                            self._add_discovered(dep_name, actual_ver, "pypi", direct=False)
+                            known_names.add(dep_norm)

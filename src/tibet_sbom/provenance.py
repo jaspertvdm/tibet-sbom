@@ -111,7 +111,7 @@ class SBOMProvenance:
             "scan_path": scan_path,
             "timestamp": now,
             "scanner": self.actor,
-            "scanner_version": "0.1.0",
+            "scanner_version": "0.2.0",
         }
 
         erachter = {
